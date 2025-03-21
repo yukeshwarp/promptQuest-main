@@ -1,0 +1,8 @@
+streamlit
+azure-cosmos
+scikit-learn
+nltk
+openai
+plotly
+wordcloud
+dash
