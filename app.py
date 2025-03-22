@@ -12,6 +12,7 @@ from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from dash import dcc
+import concurrent.futures
 
 # Page configuration
 st.set_page_config(
@@ -111,10 +112,54 @@ with st.sidebar:
         # We'll refresh data when filter changes
         st.session_state["refresh_data"] = True
     
-    limit = st.slider("Number of Records", min_value=50, max_value=200, value=150, step=50)
+    limit = st.slider("Number of Records", min_value=150, max_value=2000, value=150, step=50)
     
     if st.button("Refresh Data", key="refresh_button"):
         st.session_state["refresh_data"] = True
+
+# # Function to fetch data from Cosmos DB
+# def fetch_chat_titles(limit=250, time_filter="All Time"):
+#     try:
+#         query = "SELECT c.id, c.TimeStamp, c.AssistantName, c.ChatTitle, c.category FROM c"
+#         params = []
+        
+#         # Add time filter if needed
+#         if time_filter != "All Time":
+#             current_time = datetime.now()
+#             if time_filter == "Last 24 Hours":
+#                 filter_time = current_time - timedelta(days=1)
+#             elif time_filter == "Last 7 Days":
+#                 filter_time = current_time - timedelta(days=7)
+#             elif time_filter == "Last 30 Days":
+#                 filter_time = current_time - timedelta(days=30)
+                
+#             query += " WHERE c.TimeStamp >= @filter_time"
+#             params.append({"name": "@filter_time", "value": filter_time.isoformat()})
+        
+#         query += " ORDER BY c.TimeStamp DESC OFFSET 0 LIMIT @limit"
+#         params.append({"name": "@limit", "value": limit})
+        
+#         # Initialize Cosmos DB Client
+#         client = CosmosClient(ENDPOINT, KEY)
+#         database = client.get_database_client(DATABASE_NAME)
+#         container = database.get_container_client(CONTAINER_NAME)
+        
+#         items = list(container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
+#         return [{"title": item["ChatTitle"], "timestamp": item.get("TimeStamp"), "assistant": item.get("AssistantName")} for item in items]
+#     except Exception as e:
+#         st.error(f"Error fetching data: {str(e)}")
+#         return []
+
+def summarize(text):
+    response = llmclient.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant expert in summarizing."},
+            {"role": "user", "content": f"Summarize the following chat in less than 25 words with understanding of intent in the chat: {text}"}
+        ],
+        temperature=0.5,
+    )
+    return response.choices[0].message.content
 
 # Function to fetch data from Cosmos DB
 def fetch_chat_titles(limit=250, time_filter="All Time"):
@@ -142,12 +187,20 @@ def fetch_chat_titles(limit=250, time_filter="All Time"):
         client = CosmosClient(ENDPOINT, KEY)
         database = client.get_database_client(DATABASE_NAME)
         container = database.get_container_client(CONTAINER_NAME)
-        
+
         items = list(container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
-        return [{"title": item["ChatTitle"], "timestamp": item.get("TimeStamp"), "assistant": item.get("AssistantName")} for item in items]
+        
+        # Use ThreadPoolExecutor to parallelize summarization
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            summaries = list(executor.map(summarize, [item["ChatTitle"] if item.get("AssistantName")!="Summarize" else item["ChatTitle"][:100] for item in items]))
+
+        # Combine summaries with the other relevant data
+        return [{"title": summary, "timestamp": item.get("TimeStamp"), "assistant": item.get("AssistantName")} for item, summary in zip(items, summaries)]
+    
     except Exception as e:
         st.error(f"Error fetching data: {str(e)}")
         return []
+    
 text_content = ""
 # Function to analyze topics
 def analyze_topics(chat_titles):
