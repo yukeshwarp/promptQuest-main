@@ -6,3 +6,4 @@ openai
 plotly
 wordcloud
 dash
+celery
