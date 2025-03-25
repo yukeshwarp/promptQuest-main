@@ -4,6 +4,7 @@ import plotly.express as px
 from azure.cosmos import CosmosClient
 from topicmodelling_dev import extract_topics_from_text
 from cloud_config import *
+from cloud_config import redis_url
 import time
 from datetime import datetime, timedelta
 import re
@@ -13,6 +14,7 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from dash import dcc
 import concurrent.futures
+from celery import Celery
 
 # Page configuration
 st.set_page_config(
@@ -20,6 +22,27 @@ st.set_page_config(
     page_icon="🔍",
     layout="wide",
     initial_sidebar_state="expanded"
+)
+
+# Create Celery instance and configure it
+app = Celery(
+    'summarization_tasks',
+    broker=redis_url,  # Set the broker URL (used for sending tasks)
+    backend=redis_url,  # Optional: if you want to store task results in Redis
+    include=['summarization_tasks']  # Module where your tasks are defined
+)
+
+# Optional Celery configuration
+app.conf.update(
+    task_serializer='json',
+    result_serializer='json',
+    accept_content=['json'],
+    timezone='UTC',
+    enable_utc=True,
+    broker_transport_options={
+        'visibility_timeout': 3600,  # Task visibility timeout (in seconds)
+        'max_connections': 100,  # Number of Redis connections
+    },
 )
 
 # Custom CSS for better styling
@@ -104,8 +127,21 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### Data Filters")
     
-    time_options = ["Last 24 Hours", "Last 7 Days", "Last 30 Days", "All Time"]
+    # time_options = ["Last 24 Hours", "Last 7 Days", "Last 30 Days", "All Time"]
+    # selected_time = st.selectbox("Time Period", time_options, index=time_options.index(st.session_state["time_filter"]))
+
+    # Sidebar Time Filter Options
+    time_options = ["Last 24 Hours", "Last 7 Days", "Last 30 Days","Quarterly", "Monthly", "Half-Yearly", "Yearly", "All Time"]
     selected_time = st.selectbox("Time Period", time_options, index=time_options.index(st.session_state["time_filter"]))
+
+    # New: Option for selecting Year and Quarter if the user selects "Quarterly"
+    if selected_time == "Quarterly":
+        year_options = [str(year) for year in range(2020, datetime.now().year + 1)]  # Adjust the year range as necessary
+        selected_year = st.selectbox("Select Year", year_options, index=year_options.index(str(datetime.now().year)))
+        selected_quarter = st.selectbox("Select Quarter", ["Q1", "Q2", "Q3", "Q4"])
+        st.session_state["selected_year"] = selected_year
+        st.session_state["selected_quarter"] = selected_quarter
+
     
     if selected_time != st.session_state["time_filter"]:
         st.session_state["time_filter"] = selected_time
@@ -117,39 +153,35 @@ with st.sidebar:
     if st.button("Refresh Data", key="refresh_button"):
         st.session_state["refresh_data"] = True
 
-# # Function to fetch data from Cosmos DB
-# def fetch_chat_titles(limit=250, time_filter="All Time"):
-#     try:
-#         query = "SELECT c.id, c.TimeStamp, c.AssistantName, c.ChatTitle, c.category FROM c"
-#         params = []
-        
-#         # Add time filter if needed
-#         if time_filter != "All Time":
-#             current_time = datetime.now()
-#             if time_filter == "Last 24 Hours":
-#                 filter_time = current_time - timedelta(days=1)
-#             elif time_filter == "Last 7 Days":
-#                 filter_time = current_time - timedelta(days=7)
-#             elif time_filter == "Last 30 Days":
-#                 filter_time = current_time - timedelta(days=30)
-                
-#             query += " WHERE c.TimeStamp >= @filter_time"
-#             params.append({"name": "@filter_time", "value": filter_time.isoformat()})
-        
-#         query += " ORDER BY c.TimeStamp DESC OFFSET 0 LIMIT @limit"
-#         params.append({"name": "@limit", "value": limit})
-        
-#         # Initialize Cosmos DB Client
-#         client = CosmosClient(ENDPOINT, KEY)
-#         database = client.get_database_client(DATABASE_NAME)
-#         container = database.get_container_client(CONTAINER_NAME)
-        
-#         items = list(container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
-#         return [{"title": item["ChatTitle"], "timestamp": item.get("TimeStamp"), "assistant": item.get("AssistantName")} for item in items]
-#     except Exception as e:
-#         st.error(f"Error fetching data: {str(e)}")
-#         return []
+def trend_analysis(mode=st.session_state["time_filter"]):
+    prompt = ""
+    text_content = st.session_state["text_content"]
+    topics = st.session_state["topics"]
+    if mode == "All Time":
+        prompt = f"""Analyse the trend over quarterly under 40 words, with bullets of key points for the database and return the output in a redable analysis format
+                    Database of application usage by users: {text_content}
+                    Highlighted topics: {topics}"""
+    elif mode == "Quaterly":
+        prompt = f"""Analyse the trend over monthly under 40 words, with bullets of key points for the database and return the output in a redable analysis format
+                    Database of application usage by users: {text_content}
+                    Highlighted topics: {topics}"""
+    else:
+        prompt = f"""Analyse the trend over yearly under 40 words, with bullets of key points for the database and return the output in a redable analysis format
+                    Database of application usage by users: {text_content}
+                    Highlighted topics: {topics}"""
+    
+    response = llmclient.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": "You are an expert in analysing trend in application usage based on application log database."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.5,
+    )
 
+    return response.choices[0].message.content
+
+@app.task
 def summarize(text):
     response = llmclient.chat.completions.create(
         model="gpt-4o-mini",
@@ -161,7 +193,8 @@ def summarize(text):
     )
     return response.choices[0].message.content
 
-# Function to fetch data from Cosmos DB
+
+# Function to fetch data from Cosmos DB with extended time ranges
 def fetch_chat_titles(limit=250, time_filter="All Time"):
     try:
         query = "SELECT c.id, c.TimeStamp, c.AssistantName, c.ChatTitle, c.category FROM c"
@@ -170,12 +203,35 @@ def fetch_chat_titles(limit=250, time_filter="All Time"):
         # Add time filter if needed
         if time_filter != "All Time":
             current_time = datetime.now()
+            
             if time_filter == "Last 24 Hours":
                 filter_time = current_time - timedelta(days=1)
             elif time_filter == "Last 7 Days":
                 filter_time = current_time - timedelta(days=7)
             elif time_filter == "Last 30 Days":
                 filter_time = current_time - timedelta(days=30)
+            elif time_filter == "Monthly":
+                filter_time = datetime(current_time.year, current_time.month, 1)
+            elif time_filter == "Half-Yearly":
+                half = 1 if current_time.month <= 6 else 2
+                start_month = 1 if half == 1 else 7
+                filter_time = datetime(current_time.year, start_month, 1)
+            elif time_filter == "Yearly":
+                filter_time = datetime(current_time.year, 1, 1)
+            
+            # Add logic for Quarterly selection
+            elif time_filter == "Quarterly":
+                selected_year = st.session_state["selected_year"]
+                selected_quarter = st.session_state["selected_quarter"]
+
+                if selected_quarter == "Q1":
+                    filter_time = datetime(int(selected_year), 1, 1)
+                elif selected_quarter == "Q2":
+                    filter_time = datetime(int(selected_year), 4, 1)
+                elif selected_quarter == "Q3":
+                    filter_time = datetime(int(selected_year), 7, 1)
+                elif selected_quarter == "Q4":
+                    filter_time = datetime(int(selected_year), 10, 1)
                 
             query += " WHERE c.TimeStamp >= @filter_time"
             params.append({"name": "@filter_time", "value": filter_time.isoformat()})
@@ -192,7 +248,7 @@ def fetch_chat_titles(limit=250, time_filter="All Time"):
         
         # Use ThreadPoolExecutor to parallelize summarization
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            summaries = list(executor.map(summarize, [item["ChatTitle"] if item.get("AssistantName")!="Summarize" else item["ChatTitle"][:100] for item in items]))
+            summaries = list(executor.map(summarize, [item["ChatTitle"] if item.get("AssistantName") != "Summarize" else item["ChatTitle"][:100] for item in items]))
 
         # Combine summaries with the other relevant data
         return [{"title": summary, "timestamp": item.get("TimeStamp"), "assistant": item.get("AssistantName")} for item, summary in zip(items, summaries)]
@@ -233,6 +289,8 @@ if st.session_state.get("refresh_data", True):
         
         st.session_state["refresh_data"] = False
 
+
+
 # Dashboard Page
 if st.session_state["current_page"] == "Dashboard":
     st.markdown('<div class="main-header">promptQuest Dashboard</div>', unsafe_allow_html=True)
@@ -258,6 +316,17 @@ if st.session_state["current_page"] == "Dashboard":
         st.markdown('<div class="metric-label">Time Period</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
+    col4, col5, col6 = st.columns(3)
+    with col4:
+        st.title("Quarterly Analysis")
+        st.markdown(trend_analysis("Quaterly"))
+    with col5:
+        st.title("Monthly Analysis")
+        st.markdown(trend_analysis())
+    with col6:
+        st.title("All Time Analysis")
+        st.markdown(trend_analysis("All Time"))
+    
     # Extracting PromptAssistant data
     prompt_assistant_data = {}
     for chat in st.session_state["chat_titles"]:
