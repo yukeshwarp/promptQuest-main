@@ -15,6 +15,7 @@ import plotly.graph_objects as go
 from dash import dcc
 import concurrent.futures
 from celery import Celery
+import random
 
 # Page configuration
 st.set_page_config(
@@ -115,14 +116,14 @@ with st.sidebar:
     # st.image("https://via.placeholder.com/150x150.png?text=DBminer", width=150)
     st.markdown("### Navigation")
     
-    if st.button("📊 Dashboard", key="nav_dashboard"):
-        st.session_state["current_page"] = "Dashboard"
+    # if st.button("📊 Dashboard", key="nav_dashboard"):
+    #     st.session_state["current_page"] = "Dashboard"
     
-    if st.button("💬 Chat Analysis", key="nav_chat"):
-        st.session_state["current_page"] = "Chat Analysis"
+    # if st.button("💬 Chat Analysis", key="nav_chat"):
+    #     st.session_state["current_page"] = "Chat Analysis"
     
-    if st.button("🔍 Topic Explorer", key="nav_topics"):
-        st.session_state["current_page"] = "Topic Explorer"
+    # if st.button("🔍 Topic Explorer", key="nav_topics"):
+    #     st.session_state["current_page"] = "Topic Explorer"
     
     st.markdown("---")
     st.markdown("### Data Filters")
@@ -148,7 +149,7 @@ with st.sidebar:
         # We'll refresh data when filter changes
         st.session_state["refresh_data"] = True
     
-    limit = st.slider("Number of Records", min_value=150, max_value=2000, value=150, step=50)
+    limit = st.slider("Number of Records", min_value=150, max_value=12000, value=150, step=50)
     
     if st.button("Refresh Data", key="refresh_button"):
         st.session_state["refresh_data"] = True
@@ -156,17 +157,18 @@ with st.sidebar:
 def trend_analysis(mode=st.session_state["time_filter"]):
     prompt = ""
     text_content = st.session_state["text_content"]
+    # st.write(text_content)
     topics = st.session_state["topics"]
     if mode == "All Time":
-        prompt = f"""Analyse the trend over quarterly under 40 words, with bullets of key points for the database and return the output in a redable analysis format
+        prompt = f"""Analyse the trend over monthly under 40 words, with bullets of key points (For display in the dashboard of application) for the database and return the output in a redable analysis format
                     Database of application usage by users: {text_content}
                     Highlighted topics: {topics}"""
     elif mode == "Quaterly":
-        prompt = f"""Analyse the trend over monthly under 40 words, with bullets of key points for the database and return the output in a redable analysis format
+        prompt = f"""Analyse the trend over monthly under 40 words, with bullets of key points (For display in the dashboard of application) for the database and return the output in a redable analysis format
                     Database of application usage by users: {text_content}
                     Highlighted topics: {topics}"""
     else:
-        prompt = f"""Analyse the trend over yearly under 40 words, with bullets of key points for the database and return the output in a redable analysis format
+        prompt = f"""Analyse the trend over monthly under 40 words, with bullets of key points (For display in the dashboard of application) for the database and return the output in a redable analysis format
                     Database of application usage by users: {text_content}
                     Highlighted topics: {topics}"""
     
@@ -183,15 +185,26 @@ def trend_analysis(mode=st.session_state["time_filter"]):
 
 @app.task
 def summarize(text):
-    response = llmclient.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant expert in summarizing."},
-            {"role": "user", "content": f"Summarize the following chat in less than 25 words with understanding of intent in the chat: {text}"}
-        ],
-        temperature=0.5,
-    )
-    return response.choices[0].message.content
+    max_tries = 5
+    base_delay = 1
+    for attempt in range(max_tries):
+        try:
+            response = llmclient.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant expert in summarizing."},
+                    {"role": "user", "content": f"Summarize the following chat in less than 25 words with understanding of intent in the chat: {text}"}
+                ],
+                temperature=0.5,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            st.error(f"Summarizing DB resulted in error after try{attempt}. \nError Details: {e}")
+            if attempt<max_tries:
+                delay = base_delay*(2**attempt) + random.uniform(1,0)
+                time.sleep(delay)
+            else:
+                raise e
 
 
 # Function to fetch data from Cosmos DB with extended time ranges
@@ -280,6 +293,7 @@ if st.session_state.get("refresh_data", True):
         
         if st.session_state["chat_titles"]:
             st.session_state["text_content"], topic_data = analyze_topics(st.session_state["chat_titles"])
+            # st.write(st.session_state["text_content"] )
             st.session_state["topics"] = topic_data
             
             # Create dataframe for visualization
@@ -289,159 +303,129 @@ if st.session_state.get("refresh_data", True):
         
         st.session_state["refresh_data"] = False
 
+col1, col2 = st.columns([0.8,0.2])
 
-
-# Dashboard Page
-if st.session_state["current_page"] == "Dashboard":
+with col1:
     st.markdown('<div class="main-header">promptQuest Dashboard</div>', unsafe_allow_html=True)
-    
-    # Summary metrics
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-value">{len(st.session_state["chat_titles"])}</div>', unsafe_allow_html=True)
-        st.markdown('<div class="metric-label">Total Chats</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-value">{len(st.session_state["topics"])}</div>', unsafe_allow_html=True)
-        st.markdown('<div class="metric-label">Identified Topics</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-value">{st.session_state["time_filter"]}</div>', unsafe_allow_html=True)
-        st.markdown('<div class="metric-label">Time Period</div>', unsafe_allow_html=True)
+with col2:
+    with st.popover("💬"):
+        # Chat Analysis Page
+        st.markdown('<div class="main-header">Chat Analysis</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="sub-header">Ask Questions About Your Data</div>', unsafe_allow_html=True)
+
+        for message in st.session_state["messages"]:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
         st.markdown('</div>', unsafe_allow_html=True)
 
-    col4, col5, col6 = st.columns(3)
-    with col4:
-        st.title("Quarterly Analysis")
-        st.markdown(trend_analysis("Quaterly"))
-    with col5:
-        st.title("Monthly Analysis")
-        st.markdown(trend_analysis())
-    with col6:
-        st.title("All Time Analysis")
-        st.markdown(trend_analysis("All Time"))
-    
-    # Extracting PromptAssistant data
-    prompt_assistant_data = {}
-    for chat in st.session_state["chat_titles"]:
-        assistant_name = chat.get("assistant", "Unknown")
-        if assistant_name in prompt_assistant_data:
-            prompt_assistant_data[assistant_name] += 1
-        else:
-            prompt_assistant_data[assistant_name] = 1
-    assistant_df = pd.DataFrame(list(prompt_assistant_data.items()), columns=["Assistant", "Chat Count"])
+        # User input for questions
+        if prompt := st.chat_input("Ask a question about your emails"):
+            text_content = st.session_state["text_content"]
+            topics = st.session_state["topics"]
+            bot_response = ""
+            if text_content and topics:
+                st.session_state["messages"].append({"role": "user", "content": prompt})
+                with st.chat_message("user"):
+                    st.markdown(prompt)
+                
+                with st.spinner("Thinking..."):
+                    time.sleep(1) 
+                    topic_names = [t for t in topics]
+                    response_stream = llmclient.chat.completions.create(
+                        model="gpt-4o",
+                        messages=[
+                            {"role": "system", "content": "You are an expert product analyst who analyses software products based on the user statistics from user database."},
+                            {"role": "user", "content": f"""
+                                Answer the user's prompt based on the following data from the database. 
+                                The database contains usage history of user questions and AI responses from an AI-assisted chatbot interface, specifically used for legal advice.
+                                
+                                User Database: {text_content}
+                                Highlighted Topics: {topics}
+                                
+                                ---
+                                Prompt: {prompt}
+                                
+                                ---
+                                Intelligently analyze the user's intent in the prompt and provide an insightful answer, utilizing relevant data and context from the database.
+                                """
+                            }
+                        ],
+                        temperature=0.7,
+                        stream=True,
+                    )
+                
+                with st.chat_message("assistant"):
+                    message_placeholder = st.empty()
+                    full_response = ""
+                    for chunk in response_stream:
+                        if chunk.choices:
+                            bot_response += chunk.choices[0].delta.content or ""
+                            message_placeholder.markdown(bot_response)
+                st.session_state["messages"].append({"role": "assistant", "content": bot_response})
+                
+            else:
+                st.warning("Please fetch and analyze topics first.")
 
-    st.markdown('<div class="sub-header">Prompt Assistant Analysis</div>', unsafe_allow_html=True)
-    
-    if not assistant_df.empty:
-        # Create a bar chart for PromptAssistant
-        fig = px.bar(
-            assistant_df.sort_values("Chat Count", ascending=False),
-            x="Assistant",
-            y="Chat Count",
-            color="Chat Count",
-            color_continuous_scale="Blues",
-            title="Top 10 Prompt Assistants by Chat Count"
-        )
-        fig.update_layout(xaxis_title="Prompt Assistant", yaxis_title="Chat Count")
-        st.plotly_chart(fig, use_container_width=True)
+st.title("Quick Trend Analysis")
+st.markdown("---")
+st.markdown(trend_analysis())
+prompt_assistant_data = {}
+for chat in st.session_state["chat_titles"]:
+    assistant_name = chat.get("assistant", "Unknown")
+    if assistant_name in prompt_assistant_data:
+        prompt_assistant_data[assistant_name] += 1
     else:
-        st.info("No data available for Prompt Assistant analysis.")
+        prompt_assistant_data[assistant_name] = 1
+assistant_df = pd.DataFrame(list(prompt_assistant_data.items()), columns=["Assistant", "Chat Count"])
 
 
-# Chat Analysis Page
-elif st.session_state["current_page"] == "Chat Analysis":
-    st.markdown('<div class="main-header">Chat Analysis</div>', unsafe_allow_html=True)
-    
-    st.markdown('<div class="sub-header">Ask Questions About Your Data</div>', unsafe_allow_html=True)
-    
-    for message in st.session_state["messages"]:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # User input for questions
-    if prompt := st.chat_input("Ask a question about your emails"):
-        text_content = st.session_state["text_content"]
-        topics = st.session_state["topics"]
-        bot_response = ""
-        if text_content and topics:
-            st.session_state["messages"].append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-            
-            with st.spinner("Thinking..."):
-                time.sleep(1) 
-                topic_names = [t for t in topics]
-                response_stream = llmclient.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": "You are an expert product analyst who analyses software products based on the user statistics from user database."},
-                        {"role": "user", "content": f"""
-                            Answer the user's prompt based on the following data from the database. 
-                            The database contains usage history of user questions and AI responses from an AI-assisted chatbot interface, specifically used for legal advice.
-                            
-                            User Database: {text_content}
-                            Highlighted Topics: {topics}
-                            
-                            ---
-                            Prompt: {prompt}
-                            
-                            ---
-                            Intelligently analyze the user's intent in the prompt and provide an insightful answer, utilizing relevant data and context from the database.
-                            """
-                        }
-                    ],
-                    temperature=0.7,
-                    stream=True,
-                )
-            
-            with st.chat_message("assistant"):
-                message_placeholder = st.empty()
-                full_response = ""
-                for chunk in response_stream:
-                    if chunk.choices:
-                        bot_response += chunk.choices[0].delta.content or ""
-                        message_placeholder.markdown(bot_response)
-            st.session_state["messages"].append({"role": "assistant", "content": bot_response})
-            
-        else:
-            st.warning("Please fetch and analyze topics first.")
+st.markdown('<div class="sub-header">Prompt Assistant Analysis</div>', unsafe_allow_html=True)
+
+if not assistant_df.empty:
+    # Create a bar chart for PromptAssistant
+    fig = px.bar(
+        assistant_df.sort_values("Chat Count", ascending=False),
+        x="Assistant",
+        y="Chat Count",
+        color="Chat Count",
+        color_continuous_scale="Blues",
+        title="Top 10 Prompt Assistants by Chat Count"
+    )
+    fig.update_layout(xaxis_title="Prompt Assistant", yaxis_title="Chat Count")
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("No data available for Prompt Assistant analysis.")
+
 
 # Topic Explorer Page
-elif st.session_state["current_page"] == "Topic Explorer":
-    st.markdown('<div class="main-header">Topic Explorer</div>', unsafe_allow_html=True)
+# elif st.session_state["current_page"] == "Topic Explorer":
+#     st.markdown('<div class="main-header">Topic Explorer</div>', unsafe_allow_html=True)
     
-    if st.session_state["topic_data"] is not None and not st.session_state["topic_data"].empty:
+#     if st.session_state["topic_data"] is not None and not st.session_state["topic_data"].empty:
         
-        wordcloud = WordCloud(
-            background_color='#140012',
-            width=512,
-            height=224, margin=True).generate(' '.join(df for df in st.session_state["topics"]))
+#         wordcloud = WordCloud(
+#             background_color='#140012',
+#             width=512,
+#             height=224, margin=True).generate(' '.join(df for df in st.session_state["topics"]))
         
-        # Display WordCloud in Streamlit
-        fig, ax = plt.subplots()
-        ax.imshow(wordcloud, interpolation='bilinear')
-        ax.axis('off')  # Hide axes
+#         # Display WordCloud in Streamlit
+#         fig, ax = plt.subplots()
+#         ax.imshow(wordcloud, interpolation='bilinear')
+#         ax.axis('off')  # Hide axes
         
-        st.pyplot(fig)
+#         st.pyplot(fig)
 
-    if st.session_state["topics"]:
-        # Topic selection
-        topic_names = [t for t in st.session_state["topics"]]
-        selected_topic = st.selectbox("Select a topic to explore", topic_names)
+#     if st.session_state["topics"]:
+#         # Topic selection
+#         topic_names = [t for t in st.session_state["topics"]]
+#         selected_topic = st.selectbox("Select a topic to explore", topic_names)
         
-        # Find the selected topic details
-        selected_topic_data = next((t for t in st.session_state["topics"] if t == selected_topic), None)
+#         # Find the selected topic details
+#         selected_topic_data = next((t for t in st.session_state["topics"] if t == selected_topic), None)
         
-    else:
-        st.info("No topics available. Try refreshing the data.")
+#     else:
+#         st.info("No topics available. Try refreshing the data.")
 
 # Footer
 st.markdown("---")
