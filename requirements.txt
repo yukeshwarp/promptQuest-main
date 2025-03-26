@@ -1,9 +1,11 @@
 streamlit
-azure-cosmos
-scikit-learn
-nltk
-openai
+pandas
 plotly
+azure-cosmos
 wordcloud
+matplotlib
 dash
 celery
+redis
+concurrent.futures
+openai
