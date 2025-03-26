@@ -2,10 +2,6 @@ streamlit
 pandas
 plotly
 azure-cosmos
-wordcloud
-matplotlib
-dash
 celery
 redis
-concurrent.futures
 openai
