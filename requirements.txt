@@ -7,3 +7,12 @@ redis
 openai
 scikit-learn
 nltk
+streamlit
+pandas
+plotly
+azure-cosmos
+redis
+matplotlib
+wordcloud
+dash
+celery
