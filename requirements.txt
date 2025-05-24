@@ -5,3 +5,4 @@ azure-cosmos
 celery
 redis
 openai
+scikit-learn
