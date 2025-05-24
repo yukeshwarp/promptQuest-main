@@ -6,3 +6,4 @@ celery
 redis
 openai
 scikit-learn
+nltk
