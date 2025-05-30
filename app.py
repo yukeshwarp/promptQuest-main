@@ -173,7 +173,7 @@ def trend_analysis(mode=st.session_state["time_filter"]):
                     Highlighted topics: {topics}"""
     
     response = llmclient.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-4.1",
         messages=[
             {"role": "system", "content": "You are an expert in analysing trend in application usage based on application log database."},
             {"role": "user", "content": prompt}
@@ -190,7 +190,7 @@ def summarize(text):
     for attempt in range(max_tries):
         try:
             response = llmclient.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4.1-mini",
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant expert in summarizing."},
                     {"role": "user", "content": f"Summarize the following chat in less than 25 words with understanding of intent in the chat: {text}"}
@@ -333,7 +333,7 @@ with col2:
                     time.sleep(1) 
                     topic_names = [t for t in topics]
                     response_stream = llmclient.chat.completions.create(
-                        model="gpt-4o",
+                        model="gpt-4.1",
                         messages=[
                             {"role": "system", "content": "You are an expert product analyst who analyses software products based on the user statistics from user database."},
                             {"role": "user", "content": f"""
