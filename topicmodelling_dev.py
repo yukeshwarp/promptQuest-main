@@ -117,7 +117,7 @@ def interpret_topics_with_llm(text, raw_topics):
         """
         
         response = llmclient.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4.1",
             messages=[{
                 "role": "system", "content": "You are a topic analysis expert who can identify meaningful themes and topics from text."
             }, {
